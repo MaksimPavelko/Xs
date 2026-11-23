@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#020208">
+<title>Particle Sphere → 3D Heart</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#020208; }
+  body { display:flex; align-items:center; justify-content:center; font-family:system-ui,sans-serif; color:#e8c8ff; }
+  canvas { display:block; width:100vw; height:100dvh; background:#020208; touch-action:manipulation; }
+  #hint { position:fixed; left:0; right:0; bottom:max(12px, env(safe-area-inset-bottom)); text-align:center;
+          font-size:12px; opacity:.55; pointer-events:none; text-shadow:0 1px 8px #000; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="hint">Нажми на экран, чтобы начать заново</div>
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const COUNT = 5000, SPHERE_RADIUS = 260, ROTATION_SPEED = 0.8;
+  const SPHERE_DURATION = 5.0, SPHERE_HOLD = 1.5;
+  const BLACK = "#020208";
+  const colors = ["#b432ff", "#b432ff", "#b432ff", "#dc78ff", "#f0b4ff", "#a01ee6"];
+  let W=1000, H=750, cx=500, cy=375, dpr=1;
+  let sphere=[], targets=[], particles=[], stars=[];
+  let phase="sphere", timer=0, angle=0, last=0;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W*dpr); canvas.height = Math.round(H*dpr);
+    canvas.style.width = W+"px"; canvas.style.height = H+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    cx=W/2; cy=H/2;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function rand(a,b){ return a+Math.random()*(b-a); }
+  function createSphere(count) {
+    const pts=[], golden=Math.PI*(3-Math.sqrt(5));
+    for(let i=0;i<count;i++){
+      const y=1-(i/(count-1))*2, r=Math.sqrt(1-y*y), t=golden*i;
+      pts.push([Math.cos(t)*r*SPHERE_RADIUS, y*SPHERE_RADIUS, Math.sin(t)*r*SPHERE_RADIUS]);
+    }
+    return pts;
+  }
+  function heartContour(t, scale=13) {
+    const x=16*Math.sin(t)**3;
+    const y=13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t);
+    return [x*scale, -y*scale];
+  }
+  function createHeartTargets(count) {
+    const pts=[], depthMax=70;
+    for(let i=0;i<count;i++){
+      const [hx0,hy0]=heartContour(rand(0,Math.PI*2));
+      const r=Math.sqrt(rand(.01,1));
+      pts.push([hx0*r,hy0*r,rand(-1,1)*depthMax*(1-r*.6)]);
+    }
+    return pts;
+  }
+  function project(x,y,z,a) {
+    const rx=x*Math.cos(a)-z*Math.sin(a);
+    let rz=x*Math.sin(a)+z*Math.cos(a);
+    const tilt=.35, ry=y*Math.cos(tilt)-rz*Math.sin(tilt);
+    rz=y*Math.sin(tilt)+rz*Math.cos(tilt);
+    const camera=700, persp=camera/(camera-rz);
+    const scale=Math.min(W/1000,H/750);
+    return [cx+rx*persp*scale, cy+ry*persp*scale, rz, persp];
+  }
+  class Particle {
+    constructor(x,y,z,target) {
+      this.x=x; this.y=y; this.z=z; this.target=target; this.base=target;
+      let a=Math.atan2(y-cy,x-cx)+rand(-.8,.8), speed=rand(180,600);
+      this.vx=Math.cos(a)*speed; this.vy=Math.sin(a)*speed; this.vz=rand(-speed,speed)*.7;
+      this.size=Math.random()<.75?1:2; this.color=colors[Math.floor(Math.random()*colors.length)];
+    }
+    update(dt,forming,a=0) {
+      if(forming){
+        const [tx,ty]=project(this.target[0],this.target[1],this.target[2],a);
+        const dx=tx-this.x, dy=ty-this.y, force=25;
+        this.vx+=dx*force*dt; this.vy+=dy*force*dt; this.vz*=Math.exp(-4*dt);
+        const f=Math.exp(-6*dt); this.vx*=f; this.vy*=f;
+      } else {
+        const f=Math.exp(-.8*dt); this.vx*=f; this.vy*=f; this.vz*=f;
+      }
+      this.x+=this.vx*dt; this.y+=this.vy*dt; this.z+=this.vz*dt;
+    }
+    draw() {
+      ctx.fillStyle=this.color; ctx.fillRect(this.x,this.y,this.size,this.size);
+    }
+  }
+  function makeStars(){
+    stars=Array.from({length:130},()=>[Math.random()*W,Math.random()*H,Math.random()<.7?1:2]);
+  }
+  function reset(){
+    phase="sphere"; timer=0; angle=0; particles=[];
+    sphere=createSphere(COUNT); targets=createHeartTargets(COUNT);
+  }
+  function drawBackground(){
+    ctx.fillStyle=BLACK; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#2d233c";
+    for(const [x,y,s] of stars) ctx.fillRect(x,y,s,s);
+  }
+  function drawSphere(progress){
+    const visible=Math.floor(COUNT*progress), points=[];
+    angle+=ROTATION_SPEED*frameDt;
+    for(let i=0;i<visible;i++){
+      const p=sphere[i], q=project(p[0],p[1],p[2],angle);
+      points.push(q);
+    }
+    points.sort((a,b)=>a[2]-b[2]);
+    for(const [x,y,depth,persp] of points){
+      const brightness=Math.max(.25,Math.min(1,(depth+SPHERE_RADIUS)/(SPHERE_RADIUS*2)));
+      const r=Math.floor(180*brightness), g=Math.floor(50*brightness), b=Math.floor(255*brightness);
+      ctx.fillStyle=`rgb(${r},${g},${b})`;
+      const size=persp<1.15?1:2; ctx.fillRect(x,y,size,size);
+    }
+    if(progress>=1 && timer>SPHERE_DURATION+SPHERE_HOLD){
+      phase="burst"; timer=0; particles=[];
+      for(let i=0;i<COUNT;i++){
+        const p=sphere[i], q=project(p[0],p[1],p[2],angle);
+        particles.push(new Particle(q[0],q[1],q[2],targets[i]));
+      }
+    }
+  }
+  let frameDt=1/60;
+  function loop(now){
+    if(!last) last=now;
+    frameDt=Math.min((now-last)/1000,.033); last=now;
+    timer+=frameDt;
+    drawBackground();
+    if(phase==="sphere"){
+      drawSphere(Math.min(timer/SPHERE_DURATION,1));
+    } else if(phase==="burst"){
+      for(const p of particles){p.update(frameDt,false);p.draw();}
+      if(timer>1.2){phase="heart";timer=0;}
+    } else if(phase==="heart"){
+      const pulse=1+Math.sin(timer*3)*.025;
+      for(const p of particles){
+        p.target=[p.base[0]*pulse,p.base[1]*pulse,p.base[2]*pulse];
+        p.update(frameDt,true,0); p.draw();
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+  canvas.addEventListener("pointerdown",reset);
+  makeStars(); reset(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
